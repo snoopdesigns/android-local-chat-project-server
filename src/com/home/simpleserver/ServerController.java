@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -15,6 +16,7 @@ public class ServerController {
 	private String iv;
 	private static ChatServer server;
 	private MessageParser parser = new MessageParser();
+	dbConnectionHandler dbConnection = new dbConnectionHandler();
 	private Timer checkPresenceTimer;
 	private boolean isDebuggerConnected = false;
 	private InetAddress debuggerAddress;
@@ -45,7 +47,7 @@ public class ServerController {
     		this.name = name;
     	}
     }
-    ArrayList<userInfo> users = new ArrayList<userInfo>();
+    //ArrayList<userInfo> users = new ArrayList<userInfo>();
     ArrayList<groupInfo> groups = new ArrayList<groupInfo>();
 	ServerController(String key,String iv)
     {
@@ -55,6 +57,7 @@ public class ServerController {
 		groups.add(new groupInfo("0001"));
     	int port = 54321;
 	    server = new ChatServer(port,this,key,iv);
+	    dbConnection.establishConnection("dbfile.db");
 	    Runnable r = new Runnable(){
 			public void run() {
 				server.waitForConnections();
@@ -69,54 +72,21 @@ public class ServerController {
     	    }
     	},this.checkPresenceTimerDelay,this.checkPresenceTimerDelay);
     }
-	private void checkPresenceTimerMethod()
-	{
-	    Thread t = new Thread(checkPresence);
-	    t.start();
-	}
-	private Runnable checkPresence = new Runnable() {
-		public void run() {
-			tMessage mes;
-		    for(int i=0;i<users.size();i++)
-		    {
-		    	Log.info(TAG, "cheking presence of user "+users.get(i).name);
-		    	if(users.get(i).checkedPresence==false)
-		    	{
-		    		if(users.get(i).doubleCheck)
-		    		{
-		    			Log.info(TAG, "Delete user "+users.get(i).name +" due presence check");
-		    			users.remove(i);
-		    		}
-		    		users.get(i).doubleCheck = true;
-		    		continue;
-		    	}
-		    	else
-		    	{
-		    		users.get(i).checkedPresence = false;
-			    	mes = new tMessage(users.get(i).name,"checkpresence","");
-					String send = parser.createMessage(mes);
-					server.sendMessage(send, users.get(i).address, users.get(i).port);
-		    	}
-		    }
-		    sendPresenceNotification();
-		}
-	};
-	public ArrayList<userInfo> getUserList()
+	/*public ArrayList<userInfo> getUserList()
 	{
 		return this.users;
-	}
+	}*/
 	public void sendMessageToUser(int userid,String message)
 	{
-		tMessage mes = new tMessage(users.get(userid).name,"",message);
+		tMessage mes = new tMessage(this.dbConnection.getUsername(userid),"",message);
 		String send = parser.createMessage(mes);
-		server.sendMessage(send, users.get(userid).address,users.get(userid).port);
+		server.sendMessage(send, this.dbConnection.getAddress(userid),this.dbConnection.getPort(userid));
 	}
 	public void sendMessageToUserFromUser(String user1,String user2,String message)
 	{
 		tMessage mes = new tMessage(user1,"privatemessage_"+user2,message);
 		String send = parser.createMessage(mes);
-		server.sendMessage(send, users.get(this.getUserIdByName(user1)).address,
-				users.get(this.getUserIdByName(user1)).port);
+		server.sendMessage(send,this.dbConnection.getAddress(this.dbConnection.getUserId(user1)),this.dbConnection.getPort(this.dbConnection.getUserId(user1)));
 	}
 	public void handleMessage(tMessage mes,InetAddress address,int port)
 	{
@@ -153,7 +123,7 @@ public class ServerController {
 		}
 		if(mes.action.equals("groupmessage"))
 		{
-			this.sendBroadcastGroupMessage(mes.data,users.get(this.getUserIdByName(mes.name)).group,mes.name);
+			this.sendBroadcastGroupMessage(mes.data,this.dbConnection.getGroup(this.dbConnection.getUserId(mes.name)),mes.name);
 		}
 		if(mes.action.contains("privatemessage"))
 		{
@@ -162,22 +132,22 @@ public class ServerController {
 		if(mes.action.equals("checkpresence"))
 		{
 			Log.info(TAG, "setting checkPresence to true, user: "+mes.name);
-			users.get(this.getUserIdByName(mes.name)).checkedPresence = true;
+			//users.get(this.getUserIdByName(mes.name)).checkedPresence = true;
 		}
 		if(mes.action.equals("updatestatus"))
 		{
-			users.get(this.getUserIdByName(mes.name)).status = mes.data;
+			this.dbConnection.setStatus(this.dbConnection.getUserId(mes.name), mes.data);
 			this.sendStatusUpdateMessage(mes.name, mes.data);
 		}
 		if(mes.action.equals("sound"))
 		{
-			this.sendBroadcastGroupSound(mes.data,users.get(this.getUserIdByName(mes.name)).group,mes.name);
+			this.sendBroadcastGroupSound(mes.data,this.dbConnection.getGroup(this.dbConnection.getUserId(mes.name)),mes.name);
 		}
 	}
 	public void handleDebuggerMessage(String action)
 	{
 		Log.info(TAG, "Message from debugger: "+action);
-		if(action.equals("exit"))
+		/*if(action.equals("exit"))
 		{
 			this.isDebuggerConnected = false;
 		}
@@ -209,48 +179,43 @@ public class ServerController {
 			users.remove(this.getUserIdByName(username));
 			server.sendUnencryptedMessage("Done", this.debuggerAddress, this.debuggerPort);
 			this.sendPresenceNotification();
-		}
+		}*/
 	}
 	public void sendStatusUpdateMessage(String username,String status)
 	{
+		ArrayList<Integer> users = this.dbConnection.getUsers();
 		for(int i=0;i<users.size();i++)
 		{
-			tMessage mes = new tMessage(users.get(i).name,"updatestatus_"+username,status);
+			tMessage mes = new tMessage(this.dbConnection.getUsername(users.get(i)),"updatestatus_"+username,status);
 			String send = parser.createMessage(mes);
-			server.sendMessage(send, users.get(i).address,users.get(i).port);
+			server.sendMessage(send, this.dbConnection.getAddress(users.get(i)),this.dbConnection.getPort(users.get(i)));
 		}
 	}
 	public void sendAckMessage(String username,String action)
 	{
 		Log.info(TAG, "sending ack message to "+username+", action = "+action);
-		int userId = this.getUserIdByName(username);
-		tMessage mes = new tMessage(users.get(userId).name,"ack",action);
+		int userId = this.dbConnection.getUserId(username);
+		tMessage mes = new tMessage(this.dbConnection.getUsername(userId),"ack",action);
 		String send = parser.createMessage(mes);
 		Log.info(TAG, send);
-		server.sendMessage(send, users.get(userId).address,users.get(userId).port);
+		server.sendMessage(send, this.dbConnection.getAddress(userId),this.dbConnection.getPort(userId));
 	}
 	public boolean isUserInList(String username)
 	{
-		for(int i=0;i<users.size();i++)
-		{
-			if(users.get(i).name.equals(username))
-				return true;
-		}
-		return false;
+		return this.dbConnection.isUserInDB(username);
 	}
 	public void registerUser(String name,InetAddress address, int port)
 	{
 		Log.info(TAG, "Registering new user: " + name);
-		userInfo user = new userInfo(name,address,port);
 		if(this.isUserInList(name))
 		{
 			this.sendStatusUpdateMessage(name, "online");
-			users.remove(this.getUserIdByName(name));
-			users.add(user);
+			this.dbConnection.deleteUser(name);
+			this.dbConnection.createNewUser(name, address.toString().replace("/", ""), port);
 		}
 		else
 		{
-			users.add(user);
+			this.dbConnection.createNewUser(name, address.toString().replace("/", ""), port);
 		}
 		this.sendAckMessage(name, "register");
 		this.sendPresenceNotification();
@@ -261,35 +226,37 @@ public class ServerController {
 		}
 		this.sendGroupList();
 		String status = "";
-		for(int i=0;i<this.users.size();i++)
+		ArrayList<Integer> users = this.dbConnection.getUsers();
+		for(int i=0;i<users.size();i++)
 		{
-			status = users.get(i).status;
-			tMessage mes = new tMessage(name,"updatestatus_"+users.get(i).name,status);
+			status = this.dbConnection.getStatus(users.get(i));
+			tMessage mes = new tMessage(name,"updatestatus_"+this.dbConnection.getUsername(users.get(i)),status);
 			String send = parser.createMessage(mes);
 			server.sendMessage(send,address,port);
 		}
 	}
 	public void registerUserGroup(String username,String groupname)
 	{
-		users.get(this.getUserIdByName(username)).group = groupname;
+		this.dbConnection.setGroup(this.dbConnection.getUserId(username), groupname);
 		this.sendAckMessage(username, "join");
 	}
 	public void deregisterUserGroup(String username)
 	{
-		users.get(this.getUserIdByName(username)).group = "";
+		this.dbConnection.setGroup(this.dbConnection.getUserId(username), "no");
 		this.sendAckMessage(username, "left");
 	}
 	
 	public void sendBroadcastGroupSound(String sound,String groupname,String username)
 	{
 		Log.info(TAG, "Sending sound to group:"+groupname);
+		ArrayList<Integer> users = this.dbConnection.getUsers();
 		for(int i=0;i<users.size();i++)
 		{
-			if(users.get(i).group.equals(groupname))
+			if(this.dbConnection.getGroup(users.get(i)).equals(groupname))
 			{
-				tMessage mes = new tMessage(users.get(i).name,"sound_"+username,sound);
+				tMessage mes = new tMessage(this.dbConnection.getUsername(users.get(i)),"sound_"+username,sound);
 				String send = parser.createMessage(mes);
-				server.sendMessage(send, users.get(i).address,users.get(i).port);
+				server.sendMessage(send, this.dbConnection.getAddress(users.get(i)),this.dbConnection.getPort(users.get(i)));
 			}
 		}
 	}
@@ -297,35 +264,37 @@ public class ServerController {
 	public void sendBroadcastGroupMessage(String message,String groupname,String username)
 	{
 		Log.info(TAG, "Sending message to group:"+groupname);
+		ArrayList<Integer> users = this.dbConnection.getUsers();
 		for(int i=0;i<users.size();i++)
 		{
-			if(users.get(i).group.equals(groupname))
+			if(this.dbConnection.getGroup(users.get(i)).equals(groupname))
 			{
-				tMessage mes = new tMessage(users.get(i).name,"groupmessage_"+username,message);
+				tMessage mes = new tMessage(this.dbConnection.getUsername(users.get(i)),"groupmessage_"+username,message);
 				String send = parser.createMessage(mes);
-				Log.info(TAG, "Sending group message:"+message+" to "+ users.get(i).name);
-				server.sendMessage(send, users.get(i).address,users.get(i).port);
+				server.sendMessage(send, this.dbConnection.getAddress(users.get(i)),this.dbConnection.getPort(users.get(i)));
 			}
 		}
 	}
 	public void sendGroupList()
 	{
+		ArrayList<Integer> users = this.dbConnection.getUsers();
 		for(int i=0;i<users.size();i++)
 		{
-			tMessage mes = new tMessage(users.get(i).name,"groups",this.getGroups());
+			tMessage mes = new tMessage(this.dbConnection.getUsername(users.get(i)),"groups",this.getGroups());
 			String send = parser.createMessage(mes);
-			Log.info(TAG, "Sending group list to:"+users.get(i).name);
-			server.sendMessage(send, users.get(i).address,users.get(i).port);
+			Log.info(TAG, "Sending group list to:"+this.dbConnection.getUsername(users.get(i)));
+			server.sendMessage(send, this.dbConnection.getAddress(users.get(i)),this.dbConnection.getPort(users.get(i)));
 		}
 	}
 	public void sendPresenceNotification()
 	{
+		ArrayList<Integer> users = this.dbConnection.getUsers();
 		for(int i=0;i<users.size();i++)
 		{
-			tMessage mes = new tMessage(users.get(i).name,"presence",this.getOnlineUsers(users.get(i).name));
+			tMessage mes = new tMessage(this.dbConnection.getUsername(users.get(i)),"presence",this.getOnlineUsers(this.dbConnection.getUsername(users.get(i))));
 			String send = parser.createMessage(mes);
-			Log.info(TAG, "Sending presence to:"+users.get(i).name);
-			server.sendMessage(send, users.get(i).address,users.get(i).port);
+			Log.info(TAG, "Sending presence to:"+this.dbConnection.getUsername(users.get(i)));
+			server.sendMessage(send, this.dbConnection.getAddress(users.get(i)),this.dbConnection.getPort(users.get(i)));
 		}
 	}
 	public String getGroups()
@@ -347,17 +316,18 @@ public class ServerController {
 	public String getOnlineUsers(String username)
 	{
 		String usersString = "";
+		ArrayList<Integer> users = this.dbConnection.getUsers();
 		for(int i=0;i<users.size();i++)
 		{
-			if(users.get(i).name.equals(username)==false)
+			if(this.dbConnection.getUsername(users.get(i)).equals(username)==false)
 			{
 				if(!usersString.equals(""))
 				{
-					usersString+=(","+users.get(i).name);
+					usersString+=(","+this.dbConnection.getUsername(users.get(i)));
 				}
 				else
 				{
-					usersString+=users.get(i).name;
+					usersString+=this.dbConnection.getUsername(users.get(i));
 				}
 			}
 		}
@@ -371,13 +341,6 @@ public class ServerController {
 	}
 	public int getUserIdByName(String name)
 	{
-		for(int i=0;i<users.size();i++)
-		{
-			if(users.get(i).name.equals(name))
-			{
-				return i;
-			}
-		}
-		return -1;
+		return this.dbConnection.getUserId(name);
 	}
 }
